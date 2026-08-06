@@ -1,0 +1,2 @@
+# Store JSON files in Git LFS (for large seed/model datasets)
+*.json filter=lfs diff=lfs merge=lfs -text
