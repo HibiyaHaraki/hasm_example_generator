@@ -1,0 +1,3 @@
+[submodule "scripts/hasm_logger"]
+	path = scripts/hasm_logger
+	url = https://github.com/HibiyaHaraki/hasm_logger
