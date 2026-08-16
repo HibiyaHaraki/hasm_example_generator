@@ -2,6 +2,13 @@
 
 Standalone seed-data repository for generating and evaluating HASM model examples.
 
+## Project Status
+
+This repository is public for visibility and personal development. It is currently
+maintained as a solo project, and contributions are not being accepted at this
+time. Please do not open pull requests or issues proposing changes until this
+notice is updated.
+
 ## Purpose
 
 This repository is versioned independently from the main HASM application.
@@ -89,6 +96,16 @@ This creates:
 - `output/my.hasm/EXPERIENCE/{UUID}/main.md` and `assets/`
 - `output/my.hasm/FACT/{UUID}/main.md` and `assets/`
 - `output/my.hasm/LINK/{UUID}/main.md` and `assets/`
+
+## License
+
+This project is released under the [MIT License](LICENSE).
+
+## Project Policies
+
+- Contribution status: see [CONTRIBUTING.md](CONTRIBUTING.md).
+- Security reports: see [SECURITY.md](SECURITY.md).
+- Support expectations: see [SUPPORT.md](SUPPORT.md).
 
 ## Logger Integration (Submodule)
 
