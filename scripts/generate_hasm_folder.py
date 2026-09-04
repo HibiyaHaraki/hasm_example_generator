@@ -3,14 +3,15 @@
 
 Expected output structure:
 my.hasm/
-  |- hasm.db
-  |- PERSON/{UUID}/main.md
-  |- PERSON/{UUID}/assets/
-  |- EXPERIENCE/{UUID}/main.md
-  |- EXPERIENCE/{UUID}/assets/
-  |- FACT/{UUID}/main.md
-  |- FACT/{UUID}/assets/
-  `- LINK/{UUID}/main.md
+    `- {person-file-stem}/
+            |- hasm.db
+            |- PERSON/{UUID}/main.md
+            |- PERSON/{UUID}/assets/
+            |- EXPERIENCE/{UUID}/main.md
+            |- EXPERIENCE/{UUID}/assets/
+            |- FACT/{UUID}/main.md
+            |- FACT/{UUID}/assets/
+            `- LINK/{UUID}/main.md
 """
 
 from __future__ import annotations
@@ -125,6 +126,7 @@ def _init_db(db_path: Path) -> sqlite3.Connection:
         CREATE TABLE IF NOT EXISTS fact (
             fact_id TEXT PRIMARY KEY,
             fact_name TEXT NOT NULL,
+            occurred_at TEXT NOT NULL,
             fact_description_path TEXT NOT NULL,
             experience_ids TEXT NOT NULL,
             person_ids TEXT NOT NULL,
@@ -141,6 +143,157 @@ def _init_db(db_path: Path) -> sqlite3.Connection:
         """
     )
     return connection
+
+
+def _generate_model(
+    payload: dict[str, Any], output_root: Path, logger: Any
+) -> bool:
+    person = payload["person"]
+    experiences = payload["experiences"]
+    facts = payload["facts"]
+    links = payload["links"]
+
+    try:
+        _ensure_empty_dir(output_root, force=False)
+    except FileExistsError:
+        logger.error("Output path already exists: %s", output_root)
+        return False
+
+    for entity in ["PERSON", "EXPERIENCE", "FACT", "LINK"]:
+        (output_root / entity).mkdir(parents=True, exist_ok=True)
+
+    db_path = output_root / "hasm.db"
+    try:
+        conn = _init_db(db_path)
+    except Exception:
+        logger.exception("Failed to initialize database: %s", db_path)
+        return False
+
+    try:
+        _write_entity_folders(
+            root=output_root,
+            entity="PERSON",
+            entity_id=person["person_id"],
+            markdown_path=person["person_description_path"],
+            title=person["person_name"],
+            body_lines=[
+                f"- person_id: {person['person_id']}",
+                f"- birthday: {person['birthday']}",
+                f"- die: {person['die']}",
+            ],
+        )
+        conn.execute(
+            """
+            INSERT INTO person (person_id, person_name, person_description_path, birthday, die, link_ids)
+            VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            (
+                person["person_id"],
+                person["person_name"],
+                person["person_description_path"],
+                person["birthday"],
+                person["die"],
+                _json_array(person["link_ids"]),
+            ),
+        )
+
+        for experience in experiences:
+            _write_entity_folders(
+                root=output_root,
+                entity="EXPERIENCE",
+                entity_id=experience["experience_id"],
+                markdown_path=experience["experience_description_path"],
+                title=experience["experience_name"],
+                body_lines=[
+                    f"- experience_id: {experience['experience_id']}",
+                    f"- person_id: {experience['person_id']}",
+                ],
+            )
+            conn.execute(
+                """
+                INSERT INTO experience (experience_id, person_id, experience_name, experience_description_path, parent_experience_ids, link_ids)
+                VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    experience["experience_id"],
+                    experience["person_id"],
+                    experience["experience_name"],
+                    experience["experience_description_path"],
+                    _json_array(experience["parent_experience_ids"]),
+                    _json_array(experience["link_ids"]),
+                ),
+            )
+
+        for fact in facts:
+            _write_entity_folders(
+                root=output_root,
+                entity="FACT",
+                entity_id=fact["fact_id"],
+                markdown_path=fact["fact_description_path"],
+                title=fact["fact_name"],
+                body_lines=[
+                    f"- fact_id: {fact['fact_id']}",
+                    f"- fact_name: {fact['fact_name']}",
+                    f"- occurred_at: {fact['occurred_at']}",
+                ],
+            )
+            conn.execute(
+                """
+                INSERT INTO fact (fact_id, fact_name, occurred_at, fact_description_path, experience_ids, person_ids, link_ids)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    fact["fact_id"],
+                    fact["fact_name"],
+                    fact["occurred_at"],
+                    fact["fact_description_path"],
+                    _json_array(fact["experience_ids"]),
+                    _json_array(fact["person_ids"]),
+                    _json_array(fact["link_ids"]),
+                ),
+            )
+
+        for link in links:
+            _write_entity_folders(
+                root=output_root,
+                entity="LINK",
+                entity_id=link["link_id"],
+                markdown_path=link["link_description_path"],
+                title=link["link_name"],
+                body_lines=[
+                    f"- link_id: {link['link_id']}",
+                    f"- link_type: {link['link_type']}",
+                ],
+            )
+            conn.execute(
+                """
+                INSERT INTO link (link_id, link_name, link_type, link_description_path, related_ids)
+                VALUES (?, ?, ?, ?, ?)
+                """,
+                (
+                    link["link_id"],
+                    link["link_name"],
+                    link["link_type"],
+                    link["link_description_path"],
+                    _json_array(link["related_ids"]),
+                ),
+            )
+
+        conn.commit()
+    except Exception:
+        logger.exception("Generation failed while writing HASM artifacts: %s", output_root)
+        return False
+    finally:
+        conn.close()
+
+    logger.info(
+        "Generated HASM model at %s: PERSON=1 EXPERIENCE=%d FACT=%d LINK=%d",
+        output_root,
+        len(experiences),
+        len(facts),
+        len(links),
+    )
+    return True
 
 
 def main() -> int:
@@ -183,17 +336,8 @@ def main() -> int:
     try:
         _ensure_empty_dir(output_root, force=args.force)
     except FileExistsError as exc:
-        # Error path: output exists and user did not request overwrite.
         logger.error(str(exc))
         return 2
-
-    for entity in ["PERSON", "EXPERIENCE", "FACT", "LINK"]:
-        (output_root / entity).mkdir(parents=True, exist_ok=True)
-
-    people_by_id: dict[str, dict[str, Any]] = {}
-    experiences_by_id: dict[str, dict[str, Any]] = {}
-    facts_by_id: dict[str, dict[str, Any]] = {}
-    links_by_id: dict[str, dict[str, Any]] = {}
 
     for json_file in json_files:
         try:
@@ -204,163 +348,13 @@ def main() -> int:
             return 1
 
         person = payload.get("person")
-        experiences = payload.get("experiences", [])
-        facts = payload.get("facts", [])
-        links = payload.get("links", [])
-
         if not isinstance(person, dict):
-            # Error path: file-level structure is malformed.
             logger.error("Invalid person object in %s", json_file.name)
             return 1
 
-        try:
-            _merge_unique([person], "person_id", json_file, people_by_id, logger)
-            _merge_unique(experiences, "experience_id", json_file, experiences_by_id, logger)
-            _merge_unique(facts, "fact_id", json_file, facts_by_id, logger)
-            _merge_unique(links, "link_id", json_file, links_by_id, logger)
-        except ValueError as exc:
-            # Error path: duplicate/conflicting identifiers across files.
-            logger.error("%s", exc)
+        model_root = output_root / json_file.stem
+        if not _generate_model(payload, model_root, logger):
             return 1
-
-    db_path = output_root / "hasm.db"
-    try:
-        conn = _init_db(db_path)
-    except Exception:
-        # Error path: SQLite initialization failure.
-        logger.exception("Failed to initialize database: %s", db_path)
-        return 1
-
-    try:
-        for person in people_by_id.values():
-            person_id = person["person_id"]
-            _write_entity_folders(
-                root=output_root,
-                entity="PERSON",
-                entity_id=person_id,
-                markdown_path=person["person_description_path"],
-                title=person["person_name"],
-                body_lines=[
-                    f"- person_id: {person_id}",
-                    f"- birthday: {person['birthday']}",
-                    f"- die: {person['die']}",
-                ],
-            )
-            conn.execute(
-                """
-                INSERT INTO person (person_id, person_name, person_description_path, birthday, die, link_ids)
-                VALUES (?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    person_id,
-                    person["person_name"],
-                    person["person_description_path"],
-                    person["birthday"],
-                    person["die"],
-                    _json_array(person["link_ids"]),
-                ),
-            )
-
-        for experience in experiences_by_id.values():
-            experience_id = experience["experience_id"]
-            _write_entity_folders(
-                root=output_root,
-                entity="EXPERIENCE",
-                entity_id=experience_id,
-                markdown_path=experience["experience_description_path"],
-                title=experience["experience_name"],
-                body_lines=[
-                    f"- experience_id: {experience_id}",
-                    f"- person_id: {experience['person_id']}",
-                ],
-            )
-            conn.execute(
-                """
-                INSERT INTO experience (experience_id, person_id, experience_name, experience_description_path, parent_experience_ids, link_ids)
-                VALUES (?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    experience_id,
-                    experience["person_id"],
-                    experience["experience_name"],
-                    experience["experience_description_path"],
-                    _json_array(experience["parent_experience_ids"]),
-                    _json_array(experience["link_ids"]),
-                ),
-            )
-
-        for fact in facts_by_id.values():
-            fact_id = fact["fact_id"]
-            _write_entity_folders(
-                root=output_root,
-                entity="FACT",
-                entity_id=fact_id,
-                markdown_path=fact["fact_description_path"],
-                title=fact["fact_name"],
-                body_lines=[
-                    f"- fact_id: {fact_id}",
-                    f"- fact_name: {fact['fact_name']}",
-                ],
-            )
-            conn.execute(
-                """
-                INSERT INTO fact (fact_id, fact_name, fact_description_path, experience_ids, person_ids, link_ids)
-                VALUES (?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    fact_id,
-                    fact["fact_name"],
-                    fact["fact_description_path"],
-                    _json_array(fact["experience_ids"]),
-                    _json_array(fact["person_ids"]),
-                    _json_array(fact["link_ids"]),
-                ),
-            )
-
-        for link in links_by_id.values():
-            link_id = link["link_id"]
-            _write_entity_folders(
-                root=output_root,
-                entity="LINK",
-                entity_id=link_id,
-                markdown_path=link["link_description_path"],
-                title=link["link_name"],
-                body_lines=[
-                    f"- link_id: {link_id}",
-                    f"- link_type: {link['link_type']}",
-                ],
-            )
-            conn.execute(
-                """
-                INSERT INTO link (link_id, link_name, link_type, link_description_path, related_ids)
-                VALUES (?, ?, ?, ?, ?)
-                """,
-                (
-                    link_id,
-                    link["link_name"],
-                    link["link_type"],
-                    link["link_description_path"],
-                    _json_array(link["related_ids"]),
-                ),
-            )
-
-        conn.commit()
-        logger.info("Database write complete: %s", db_path)
-    except Exception:
-        # Error path: write transaction failed.
-        logger.exception("Generation failed while writing HASM artifacts")
-        return 1
-    finally:
-        conn.close()
-
-    logger.info("Generated HASM folder at: %s", output_root)
-    logger.info(
-        "Entities: PERSON=%d EXPERIENCE=%d FACT=%d LINK=%d",
-        len(people_by_id),
-        len(experiences_by_id),
-        len(facts_by_id),
-        len(links_by_id),
-    )
 
     return 0
 

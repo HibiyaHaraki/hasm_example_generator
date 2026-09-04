@@ -47,6 +47,13 @@ def is_iso_datetime(value: Any) -> bool:
         return False
 
 
+def is_iso_datetime_or_blank(value: Any) -> bool:
+    # Blank string is allowed for living persons (no death date yet).
+    if value == "":
+        return True
+    return is_iso_datetime(value)
+
+
 def expect_fields(obj: dict[str, Any], required: list[str], label: str, errors: list[ValidationError], file: Path) -> None:
     for key in required:
         if key not in obj:
@@ -117,10 +124,10 @@ def validate_file(path: Path) -> list[ValidationError]:
     person_id = person.get("person_id")
     if not is_uuid(person_id):
         errors.append(ValidationError(path, "person.person_id must be UUID"))
-    if not is_iso_datetime(person.get("birthday")):
-        errors.append(ValidationError(path, "person.birthday must be ISO-8601 datetime"))
-    if not is_iso_datetime(person.get("die")):
-        errors.append(ValidationError(path, "person.die must be ISO-8601 datetime"))
+    if not is_iso_datetime_or_blank(person.get("birthday")):
+        errors.append(ValidationError(path, "person.birthday must be ISO-8601 datetime or blank"))
+    if not is_iso_datetime_or_blank(person.get("die")):
+        errors.append(ValidationError(path, "person.die must be ISO-8601 datetime or blank (living person)"))
     expect_description_path(
         person.get("person_description_path"), "PERSON", person_id, path, errors
     )
@@ -170,6 +177,7 @@ def validate_file(path: Path) -> list[ValidationError]:
         req = [
             "fact_id",
             "fact_name",
+            "occurred_at",
             "fact_description_path",
             "experience_ids",
             "person_ids",
@@ -182,6 +190,9 @@ def validate_file(path: Path) -> list[ValidationError]:
             errors.append(ValidationError(path, f"facts[{i}].fact_id must be UUID"))
         else:
             fact_ids.add(fact_id)
+
+        if not is_iso_datetime(fact.get("occurred_at")):
+            errors.append(ValidationError(path, f"facts[{i}].occurred_at must be ISO-8601 datetime"))
 
         expect_description_path(
             fact.get("fact_description_path"), "FACT", fact_id, path, errors

@@ -16,11 +16,12 @@ It stores curated JSON input files that can be converted into HASM model storage
 
 ## Dataset Scope
 
-Current dataset includes 3 Japanese historical figures:
+Current dataset includes 3 Japanese historical figures and 1 real profile:
 
 - Oda Nobunaga
 - Toyotomi Hideyoshi
 - Tokugawa Ieyasu
+- Haraki Hibiya (generated from `scripts/generate_haraki_hibiya.py`, sourced from hibiya-app's `Record_data.js`)
 
 Each JSON file contains all major HASM entities needed for import:
 
@@ -28,6 +29,13 @@ Each JSON file contains all major HASM entities needed for import:
 - `experiences` (EXPERIENCE)
 - `facts` (FACT)
 - `links` (LINK)
+
+To regenerate the Haraki Hibiya dataset after `Record_data.js` changes, update the
+`RECORDS` list in `scripts/generate_haraki_hibiya.py` and re-run it:
+
+```bash
+python scripts/generate_haraki_hibiya.py
+```
 
 ## Folder Structure
 
@@ -45,14 +53,14 @@ hasm_example_generator/
 ## JSON Conventions
 
 - IDs are UUID strings.
-- FACT entries include both `fact_id` and `fact_name`.
+- FACT entries include `fact_id`, `fact_name`, and `occurred_at` (matches the HASM `fact.occurred_at` column used to order FACT commits along the visualizer Z-axis).
 - FACT entries use `experience_ids` to point to existing EXPERIENCE IDs.
 - Path fields (`*_description_path`) follow HASM storage model conventions:
   - `PERSON/{person_id}/main.md`
   - `EXPERIENCE/{experience_id}/main.md`
   - `FACT/{fact_id}/main.md`
   - `LINK/{link_id}/main.md`
-- Date values use ISO-8601 strings.
+- Date values use ISO-8601 strings. `person.birthday`/`person.die` may be blank (`""`) for a living person with no death date.
 
 ## Next Steps
 
@@ -89,13 +97,15 @@ Generate HASM folder layout from JSON data:
 python scripts/generate_hasm_folder.py --output output/my.hasm --force
 ```
 
-This creates:
+This creates one independent HASM model per JSON file:
 
-- `output/my.hasm/hasm.db`
-- `output/my.hasm/PERSON/{UUID}/main.md` and `assets/`
-- `output/my.hasm/EXPERIENCE/{UUID}/main.md` and `assets/`
-- `output/my.hasm/FACT/{UUID}/main.md` and `assets/`
-- `output/my.hasm/LINK/{UUID}/main.md` and `assets/`
+- `output/my.hasm/{person-file-stem}/hasm.db`
+- `output/my.hasm/{person-file-stem}/PERSON/{UUID}/main.md` and `assets/`
+- `output/my.hasm/{person-file-stem}/EXPERIENCE/{UUID}/main.md` and `assets/`
+- `output/my.hasm/{person-file-stem}/FACT/{UUID}/main.md` and `assets/`
+- `output/my.hasm/{person-file-stem}/LINK/{UUID}/main.md` and `assets/`
+
+Each model contains only the person and related entities from its source JSON file.
 
 ## License
 
