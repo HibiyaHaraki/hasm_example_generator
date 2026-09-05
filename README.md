@@ -37,6 +37,70 @@ To regenerate the Haraki Hibiya dataset after `Record_data.js` changes, update t
 python scripts/generate_haraki_hibiya.py
 ```
 
+To regenerate Hololive JP PERSON seed files:
+
+```bash
+python scripts/generate_hololive_jp.py
+```
+
+To enrich those files with YouTube video FACT entries and detected collaboration
+LINK entries, set a YouTube Data API key in your local shell first:
+
+```bash
+set YOUTUBE_API_KEY=<your local YouTube Data API key>
+python scripts/generate_hololive_jp.py --max-videos 0
+```
+
+Use `--include-dev-is` to also include hololive DEV_IS members. Use
+`--max-videos N` for a smaller API-cost test run.
+
+### YouTube Fetching Setup
+
+The YouTube API key must stay local. Do not commit it to this repository. The
+repository ignores `.env`, `.env.*`, and `*.local.env` files, but the scripts use
+the `YOUTUBE_API_KEY` environment variable directly and do not require a local
+file.
+
+1. Create or select a Google Cloud project.
+2. Enable the YouTube Data API v3 for that project.
+3. Create an API key in Google Cloud Console.
+4. Restrict the key where possible, for example by API restriction to YouTube
+  Data API v3.
+5. Set the key only in your local terminal before running generation.
+
+For Command Prompt:
+
+```bat
+set YOUTUBE_API_KEY=<your local YouTube Data API key>
+set HOLOLIVE_MAX_VIDEOS=10
+generate_all.bat
+```
+
+For PowerShell:
+
+```powershell
+$env:YOUTUBE_API_KEY = "<your local YouTube Data API key>"
+$env:HOLOLIVE_MAX_VIDEOS = "10"
+.\generate_all.bat
+```
+
+Use `HOLOLIVE_MAX_VIDEOS=10` for an initial test run. Use `0` to fetch all
+available uploads, which can consume significant YouTube API quota.
+
+To run the full local generation flow at once on Windows:
+
+```bat
+generate_all.bat
+```
+
+The batch file runs Haraki Hibiya JSON generation, Hololive JP JSON generation,
+JSON validation, and HASM output generation. Optional environment variables:
+
+- `YOUTUBE_API_KEY`: enrich Hololive FACT/LINK data from YouTube.
+- `HOLOLIVE_MAX_VIDEOS`: maximum videos per Hololive channel; default is `0` for all.
+- `HOLOLIVE_INCLUDE_DEV_IS=1`: also include hololive DEV_IS members.
+- `PYTHON`: Python executable name or path; default is `python`.
+
 ## Folder Structure
 
 ```text
@@ -94,18 +158,22 @@ Validation checks include:
 Generate HASM folder layout from JSON data:
 
 ```bash
-python scripts/generate_hasm_folder.py --output output/my.hasm --force
+python scripts/generate_hasm_folder.py --output output --force
 ```
 
-This creates one independent HASM model per JSON file:
+This creates one independent HASM model per JSON file, except Hololive JP
+source files are combined into one model:
 
-- `output/my.hasm/{person-file-stem}/hasm.db`
-- `output/my.hasm/{person-file-stem}/PERSON/{UUID}/main.md` and `assets/`
-- `output/my.hasm/{person-file-stem}/EXPERIENCE/{UUID}/main.md` and `assets/`
-- `output/my.hasm/{person-file-stem}/FACT/{UUID}/main.md` and `assets/`
-- `output/my.hasm/{person-file-stem}/LINK/{UUID}/main.md` and `assets/`
+- `output/{person-folder}/hasm.db`
+- `output/{person-folder}/PERSON/{UUID}/main.md` and `assets/`
+- `output/{person-folder}/EXPERIENCE/{UUID}/main.md` and `assets/`
+- `output/{person-folder}/FACT/{UUID}/main.md` and `assets/`
+- `output/{person-folder}/LINK/{UUID}/main.md` and `assets/`
+- `output/Hololive_JP/hasm.db` contains every `hololive_jp_*.json` PERSON,
+  EXPERIENCE, FACT, and LINK row in one database.
 
-Each model contains only the person and related entities from its source JSON file.
+Non-Hololive models contain only the person and related entities from their
+source JSON file.
 
 ## License
 

@@ -2,7 +2,7 @@
 """Generate a HASM model folder from example JSON input files.
 
 Expected output structure:
-my.hasm/
+output/
     `- {person-file-stem}/
             |- hasm.db
             |- PERSON/{UUID}/main.md
@@ -29,7 +29,7 @@ from validate_hasm_examples import validate_file
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Generate a my.hasm folder from JSON files.")
+    parser = argparse.ArgumentParser(description="Generate HASM model folders from JSON files.")
     parser.add_argument(
         "--input-dir",
         default="data/persons",
@@ -37,13 +37,18 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--output",
-        default="output/my.hasm",
-        help="Output HASM folder path (default: output/my.hasm)",
+        default="output",
+        help="Output HASM folder path (default: output)",
     )
     parser.add_argument(
         "--force",
         action="store_true",
         help="Delete output path first if it already exists",
+    )
+    parser.add_argument(
+        "--combine-hololive-folder",
+        default="Hololive_JP",
+        help="Folder name for the combined hololive_jp_ model (default: Hololive_JP)",
     )
     return parser.parse_args()
 
@@ -77,6 +82,22 @@ def _write_entity_folders(root: Path, entity: str, entity_id: str, markdown_path
     base_dir = root / entity / entity_id
     (base_dir / "assets").mkdir(parents=True, exist_ok=True)
     _write_markdown(root, markdown_path, title, body_lines)
+
+
+def _entity_body_lines(entity: dict[str, Any], base_lines: list[str]) -> list[str]:
+    description_lines = entity.get("description_lines", [])
+    if not isinstance(description_lines, list):
+        return base_lines
+    return [*base_lines, *[str(line) for line in description_lines]]
+
+
+def _model_folder_name(payload: dict[str, Any], json_file: Path) -> str:
+    person = payload.get("person")
+    if isinstance(person, dict):
+        output_folder_name = person.get("output_folder_name")
+        if isinstance(output_folder_name, str) and output_folder_name.strip():
+            return output_folder_name.strip()
+    return "_".join(part.capitalize() for part in json_file.stem.split("_") if part)
 
 
 def _merge_unique(
@@ -145,6 +166,122 @@ def _init_db(db_path: Path) -> sqlite3.Connection:
     return connection
 
 
+def _write_payload_to_model(payload: dict[str, Any], output_root: Path, conn: sqlite3.Connection) -> None:
+    person = payload["person"]
+    experiences = payload["experiences"]
+    facts = payload["facts"]
+    links = payload["links"]
+
+    _write_entity_folders(
+        root=output_root,
+        entity="PERSON",
+        entity_id=person["person_id"],
+        markdown_path=person["person_description_path"],
+        title=person["person_name"],
+        body_lines=_entity_body_lines(person, [
+            f"- person_id: {person['person_id']}",
+            f"- birthday: {person['birthday']}",
+            f"- die: {person['die']}",
+        ]),
+    )
+    conn.execute(
+        """
+        INSERT INTO person (person_id, person_name, person_description_path, birthday, die, link_ids)
+        VALUES (?, ?, ?, ?, ?, ?)
+        """,
+        (
+            person["person_id"],
+            person["person_name"],
+            person["person_description_path"],
+            person["birthday"],
+            person["die"],
+            _json_array(person["link_ids"]),
+        ),
+    )
+
+    for experience in experiences:
+        _write_entity_folders(
+            root=output_root,
+            entity="EXPERIENCE",
+            entity_id=experience["experience_id"],
+            markdown_path=experience["experience_description_path"],
+            title=experience["experience_name"],
+            body_lines=_entity_body_lines(experience, [
+                f"- experience_id: {experience['experience_id']}",
+                f"- person_id: {experience['person_id']}",
+            ]),
+        )
+        conn.execute(
+            """
+            INSERT INTO experience (experience_id, person_id, experience_name, experience_description_path, parent_experience_ids, link_ids)
+            VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            (
+                experience["experience_id"],
+                experience["person_id"],
+                experience["experience_name"],
+                experience["experience_description_path"],
+                _json_array(experience["parent_experience_ids"]),
+                _json_array(experience["link_ids"]),
+            ),
+        )
+
+    for fact in facts:
+        _write_entity_folders(
+            root=output_root,
+            entity="FACT",
+            entity_id=fact["fact_id"],
+            markdown_path=fact["fact_description_path"],
+            title=fact["fact_name"],
+            body_lines=_entity_body_lines(fact, [
+                f"- fact_id: {fact['fact_id']}",
+                f"- fact_name: {fact['fact_name']}",
+                f"- occurred_at: {fact['occurred_at']}",
+            ]),
+        )
+        conn.execute(
+            """
+            INSERT INTO fact (fact_id, fact_name, occurred_at, fact_description_path, experience_ids, person_ids, link_ids)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                fact["fact_id"],
+                fact["fact_name"],
+                fact["occurred_at"],
+                fact["fact_description_path"],
+                _json_array(fact["experience_ids"]),
+                _json_array(fact["person_ids"]),
+                _json_array(fact["link_ids"]),
+            ),
+        )
+
+    for link in links:
+        _write_entity_folders(
+            root=output_root,
+            entity="LINK",
+            entity_id=link["link_id"],
+            markdown_path=link["link_description_path"],
+            title=link["link_name"],
+            body_lines=_entity_body_lines(link, [
+                f"- link_id: {link['link_id']}",
+                f"- link_type: {link['link_type']}",
+            ]),
+        )
+        conn.execute(
+            """
+            INSERT INTO link (link_id, link_name, link_type, link_description_path, related_ids)
+            VALUES (?, ?, ?, ?, ?)
+            """,
+            (
+                link["link_id"],
+                link["link_name"],
+                link["link_type"],
+                link["link_description_path"],
+                _json_array(link["related_ids"]),
+            ),
+        )
+
+
 def _generate_model(
     payload: dict[str, Any], output_root: Path, logger: Any
 ) -> bool:
@@ -170,115 +307,7 @@ def _generate_model(
         return False
 
     try:
-        _write_entity_folders(
-            root=output_root,
-            entity="PERSON",
-            entity_id=person["person_id"],
-            markdown_path=person["person_description_path"],
-            title=person["person_name"],
-            body_lines=[
-                f"- person_id: {person['person_id']}",
-                f"- birthday: {person['birthday']}",
-                f"- die: {person['die']}",
-            ],
-        )
-        conn.execute(
-            """
-            INSERT INTO person (person_id, person_name, person_description_path, birthday, die, link_ids)
-            VALUES (?, ?, ?, ?, ?, ?)
-            """,
-            (
-                person["person_id"],
-                person["person_name"],
-                person["person_description_path"],
-                person["birthday"],
-                person["die"],
-                _json_array(person["link_ids"]),
-            ),
-        )
-
-        for experience in experiences:
-            _write_entity_folders(
-                root=output_root,
-                entity="EXPERIENCE",
-                entity_id=experience["experience_id"],
-                markdown_path=experience["experience_description_path"],
-                title=experience["experience_name"],
-                body_lines=[
-                    f"- experience_id: {experience['experience_id']}",
-                    f"- person_id: {experience['person_id']}",
-                ],
-            )
-            conn.execute(
-                """
-                INSERT INTO experience (experience_id, person_id, experience_name, experience_description_path, parent_experience_ids, link_ids)
-                VALUES (?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    experience["experience_id"],
-                    experience["person_id"],
-                    experience["experience_name"],
-                    experience["experience_description_path"],
-                    _json_array(experience["parent_experience_ids"]),
-                    _json_array(experience["link_ids"]),
-                ),
-            )
-
-        for fact in facts:
-            _write_entity_folders(
-                root=output_root,
-                entity="FACT",
-                entity_id=fact["fact_id"],
-                markdown_path=fact["fact_description_path"],
-                title=fact["fact_name"],
-                body_lines=[
-                    f"- fact_id: {fact['fact_id']}",
-                    f"- fact_name: {fact['fact_name']}",
-                    f"- occurred_at: {fact['occurred_at']}",
-                ],
-            )
-            conn.execute(
-                """
-                INSERT INTO fact (fact_id, fact_name, occurred_at, fact_description_path, experience_ids, person_ids, link_ids)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    fact["fact_id"],
-                    fact["fact_name"],
-                    fact["occurred_at"],
-                    fact["fact_description_path"],
-                    _json_array(fact["experience_ids"]),
-                    _json_array(fact["person_ids"]),
-                    _json_array(fact["link_ids"]),
-                ),
-            )
-
-        for link in links:
-            _write_entity_folders(
-                root=output_root,
-                entity="LINK",
-                entity_id=link["link_id"],
-                markdown_path=link["link_description_path"],
-                title=link["link_name"],
-                body_lines=[
-                    f"- link_id: {link['link_id']}",
-                    f"- link_type: {link['link_type']}",
-                ],
-            )
-            conn.execute(
-                """
-                INSERT INTO link (link_id, link_name, link_type, link_description_path, related_ids)
-                VALUES (?, ?, ?, ?, ?)
-                """,
-                (
-                    link["link_id"],
-                    link["link_name"],
-                    link["link_type"],
-                    link["link_description_path"],
-                    _json_array(link["related_ids"]),
-                ),
-            )
-
+        _write_payload_to_model(payload, output_root, conn)
         conn.commit()
     except Exception:
         logger.exception("Generation failed while writing HASM artifacts: %s", output_root)
@@ -292,6 +321,46 @@ def _generate_model(
         len(experiences),
         len(facts),
         len(links),
+    )
+    return True
+
+
+def _generate_combined_model(
+    payloads: list[dict[str, Any]], output_root: Path, logger: Any
+) -> bool:
+    try:
+        _ensure_empty_dir(output_root, force=False)
+    except FileExistsError:
+        logger.error("Output path already exists: %s", output_root)
+        return False
+
+    for entity in ["PERSON", "EXPERIENCE", "FACT", "LINK"]:
+        (output_root / entity).mkdir(parents=True, exist_ok=True)
+
+    db_path = output_root / "hasm.db"
+    try:
+        conn = _init_db(db_path)
+    except Exception:
+        logger.exception("Failed to initialize database: %s", db_path)
+        return False
+
+    try:
+        for payload in payloads:
+            _write_payload_to_model(payload, output_root, conn)
+        conn.commit()
+    except Exception:
+        logger.exception("Generation failed while writing combined HASM artifacts: %s", output_root)
+        return False
+    finally:
+        conn.close()
+
+    logger.info(
+        "Generated combined HASM model at %s: PERSON=%d EXPERIENCE=%d FACT=%d LINK=%d",
+        output_root,
+        len(payloads),
+        sum(len(payload["experiences"]) for payload in payloads),
+        sum(len(payload["facts"]) for payload in payloads),
+        sum(len(payload["links"]) for payload in payloads),
     )
     return True
 
@@ -339,6 +408,8 @@ def main() -> int:
         logger.error(str(exc))
         return 2
 
+    hololive_payloads: list[dict[str, Any]] = []
+
     for json_file in json_files:
         try:
             payload = _load_json(json_file)
@@ -352,8 +423,17 @@ def main() -> int:
             logger.error("Invalid person object in %s", json_file.name)
             return 1
 
-        model_root = output_root / json_file.stem
+        if json_file.stem.startswith("hololive_jp_"):
+            hololive_payloads.append(payload)
+            continue
+
+        model_root = output_root / _model_folder_name(payload, json_file)
         if not _generate_model(payload, model_root, logger):
+            return 1
+
+    if hololive_payloads:
+        model_root = output_root / args.combine_hololive_folder
+        if not _generate_combined_model(hololive_payloads, model_root, logger):
             return 1
 
     return 0
