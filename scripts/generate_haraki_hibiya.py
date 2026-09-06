@@ -171,6 +171,7 @@ def build() -> dict:
     person = {
         "person_id": person_id,
         "person_name": PERSON_NAME,
+        "output_folder_name": "Hibiya_Haraki",
         "person_description_path": f"PERSON/{person_id}/main.md",
         "birthday": BIRTHDAY,
         "die": DIE,

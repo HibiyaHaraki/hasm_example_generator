@@ -16,6 +16,12 @@ yarn-debug.log*
 yarn-error.log*
 pnpm-debug.log*
 
+# Local secrets / environment overrides
+.env
+.env.*
+!.env.example
+*.local.env
+
 # OS / Editor
 .DS_Store
 Thumbs.db
@@ -28,3 +34,6 @@ Thumbs.db
 *.sqlite3
 *.zip
 output/
+
+# Generated intermediate JSON seed files
+data/persons/hololive_jp_*.json
