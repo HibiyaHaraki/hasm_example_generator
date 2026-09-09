@@ -118,6 +118,11 @@ def parse_args() -> argparse.Namespace:
         default=0.1,
         help="Delay between YouTube API calls (default: 0.1).",
     )
+    parser.add_argument(
+        "--revise-existing",
+        action="store_true",
+        help="Add collaboration experiences and reciprocal FACTs to existing JSON files.",
+    )
     return parser.parse_args()
 
 
@@ -127,6 +132,10 @@ def entity_id(kind: str, key: str) -> str:
 
 def output_folder_name(member: Member) -> str:
     return "_".join(part.capitalize() for part in member.slug.split("_"))
+
+
+def collaboration_experience_id(member: Member) -> str:
+    return entity_id("experience", f"{member.slug}:colaboration")
 
 
 def iso_datetime(value: str) -> str:
@@ -251,6 +260,7 @@ def build_member_payload(
 ) -> dict[str, Any]:
     person_id = entity_id("person", member.slug)
     experience_id = entity_id("experience", f"{member.slug}:youtube")
+    collaboration_id = collaboration_experience_id(member)
     person = {
         "person_id": person_id,
         "person_name": member.name,
@@ -276,11 +286,25 @@ def build_member_payload(
             "parent_experience_ids": [],
             "link_ids": [],
             "description_lines": ["", "## Scope", "Videos imported from the member's YouTube uploads playlist."],
-        }
+        },
+        {
+            "experience_id": collaboration_id,
+            "person_id": person_id,
+            "experience_name": f"{member.name}_colaboration",
+            "experience_description_path": f"EXPERIENCE/{collaboration_id}/main.md",
+            "parent_experience_ids": [experience_id],
+            "link_ids": [],
+            "description_lines": [
+                "",
+                "## Scope",
+                "Videos featuring this member and one or more other Hololive members.",
+            ],
+        },
     ]
 
     facts: list[dict[str, Any]] = []
     links: list[dict[str, Any]] = []
+    person_link_ids: list[str] = []
     for video in videos:
         video_id = str(video["id"])
         snippet = video.get("snippet", {})
@@ -295,6 +319,7 @@ def build_member_payload(
         if collaborators:
             link_id = entity_id("link", f"{member.slug}:youtube:{video_id}:collaboration")
             link_ids.append(link_id)
+            person_link_ids.append(link_id)
             links.append(
                 {
                     "link_id": link_id,
@@ -312,13 +337,17 @@ def build_member_payload(
                 }
             )
 
+        experience_ids = [experience_id]
+        if collaborators:
+            experience_ids.append(collaboration_id)
+
         facts.append(
             {
                 "fact_id": fact_id,
                 "fact_name": title,
                 "occurred_at": published_at,
                 "fact_description_path": f"FACT/{fact_id}/main.md",
-                "experience_ids": [experience_id],
+                "experience_ids": experience_ids,
                 "person_ids": [person_id, *collaborator_ids],
                 "link_ids": link_ids,
                 "description_lines": [
@@ -335,7 +364,93 @@ def build_member_payload(
             }
         )
 
+    person["link_ids"] = person_link_ids
     return {"person": person, "experiences": experiences, "facts": facts, "links": links}
+
+
+def add_collaboration_fact_mirrors(
+    payloads: dict[str, dict[str, Any]], members: tuple[Member, ...]
+) -> None:
+    """Copy each collaboration fact into every participating member's payload."""
+    payload_by_person_id = {
+        payload["person"]["person_id"]: payload for payload in payloads.values()
+    }
+    member_by_person_id = {
+        entity_id("person", member.slug): member for member in members
+    }
+
+    for source_slug, source_payload in payloads.items():
+        source_person_id = source_payload["person"]["person_id"]
+        for fact in source_payload["facts"]:
+            participant_ids = fact.get("person_ids", [])
+            if len(participant_ids) < 2:
+                continue
+            for participant_id in participant_ids:
+                if participant_id == source_person_id or participant_id not in payload_by_person_id:
+                    continue
+                participant = member_by_person_id[participant_id]
+                participant_payload = payload_by_person_id[participant_id]
+                mirror_id = entity_id(
+                    "fact", f"{source_slug}:collaboration:{fact['fact_id']}:{participant.slug}"
+                )
+                if any(existing["fact_id"] == mirror_id for existing in participant_payload["facts"]):
+                    continue
+                mirror = dict(fact)
+                mirror["fact_id"] = mirror_id
+                mirror["fact_description_path"] = f"FACT/{mirror_id}/main.md"
+                mirror["experience_ids"] = [collaboration_experience_id(participant)]
+                mirror["link_ids"] = []
+                mirror["description_lines"] = [
+                    *fact.get("description_lines", []),
+                    "",
+                    f"- mirrored_from: {source_person_id}",
+                ]
+                participant_payload["facts"].append(mirror)
+
+
+def revise_existing_payloads(output_dir: Path, members: tuple[Member, ...]) -> int:
+    payloads: dict[str, dict[str, Any]] = {}
+    for member in members:
+        path = output_dir / f"hololive_jp_{member.slug}.json"
+        if path.exists():
+            payloads[member.slug] = json.loads(path.read_text(encoding="utf-8"))
+
+    for member in members:
+        payload = payloads.get(member.slug)
+        if payload is None:
+            continue
+        person_id = payload["person"]["person_id"]
+        collaboration_id = collaboration_experience_id(member)
+        if not any(exp["experience_id"] == collaboration_id for exp in payload["experiences"]):
+            payload["experiences"].append(
+                {
+                    "experience_id": collaboration_id,
+                    "person_id": person_id,
+                    "experience_name": f"{member.name}_colaboration",
+                    "experience_description_path": f"EXPERIENCE/{collaboration_id}/main.md",
+                    "parent_experience_ids": [
+                        entity_id("experience", f"{member.slug}:youtube")
+                    ],
+                    "link_ids": [],
+                    "description_lines": [
+                        "",
+                        "## Scope",
+                        "Videos featuring this member and one or more other Hololive members.",
+                    ],
+                }
+            )
+        for fact in payload["facts"]:
+            if len(fact.get("person_ids", [])) > 1 and collaboration_id not in fact["experience_ids"]:
+                fact["experience_ids"].append(collaboration_id)
+
+    add_collaboration_fact_mirrors(payloads, members)
+    for member in members:
+        payload = payloads.get(member.slug)
+        if payload is None:
+            continue
+        path = output_dir / f"hololive_jp_{member.slug}.json"
+        path.write_text(json.dumps(payload, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+    return len(payloads)
 
 
 def fetch_member_videos(
@@ -368,9 +483,15 @@ def main() -> int:
     if args.include_dev_is:
         members = (*members, *HOLOLIVE_DEV_IS_MEMBERS)
 
+    if args.revise_existing:
+        revised_count = revise_existing_payloads(output_dir, members)
+        logger.info("Revised %d existing Hololive JSON file(s) in %s", revised_count, output_dir)
+        return 0
+
     if not args.api_key:
         logger.warning("YOUTUBE_API_KEY is not set; writing PERSON-only files.")
 
+    payloads: dict[str, dict[str, Any]] = {}
     for member in members:
         logger.info("Generating %s", member.name)
         videos: list[dict[str, Any]] = []
@@ -382,8 +503,11 @@ def main() -> int:
                 args.delay_seconds,
                 logger,
             )
-        payload = build_member_payload(member, members, videos)
-        write_payload(output_dir, member, payload)
+        payloads[member.slug] = build_member_payload(member, members, videos)
+
+    add_collaboration_fact_mirrors(payloads, members)
+    for member in members:
+        write_payload(output_dir, member, payloads[member.slug])
 
     logger.info("Wrote %d Hololive JSON file(s) to %s", len(members), output_dir)
     return 0
