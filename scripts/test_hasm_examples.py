@@ -57,18 +57,33 @@ class HasmExamplesTests(unittest.TestCase):
         payload = build_member_payload(self.members[0], self.members, [video])
         self.assertEqual(payload["facts"][0]["link"], [YOUTUBE_WATCH_BASE + video["id"]])
         self.assertEqual(payload["facts"][0]["link_ids"], [])
+        self.assertEqual(
+            payload["facts"][0]["experience_ids"],
+            [payload["experiences"][0]["experience_id"]],
+        )
+        self.assertEqual(len(payload["experiences"]), 2)
         self.assertEqual(payload["links"], [])
         self.assertEqual(self.validate(payload), [])
 
     def test_collaboration_urls_and_relationships_survive_mirroring(self) -> None:
+        self.payloads[self.members[1].slug] = build_member_payload(
+            self.members[1], self.members, [self.video]
+        )
         add_collaboration_fact_mirrors(self.payloads, self.members)
         link_ids = set()
         fact_ids = set()
+        participant_ids = set()
         for payload in self.payloads.values():
             self.assertEqual(len(payload["facts"]), 1)
+            self.assertEqual(len(payload["experiences"]), 2)
             fact = payload["facts"][0]
             fact_ids.add(fact["fact_id"])
+            participant_ids.update(fact["person_ids"])
             self.assertEqual(fact["link"], [YOUTUBE_WATCH_BASE + self.video["id"]])
+            self.assertEqual(
+                fact["experience_ids"],
+                [payload["experiences"][1]["experience_id"]],
+            )
             self.assertEqual(len(fact["link_ids"]), 1)
             link = payload["links"][0]
             link_ids.add(link["link_id"])
@@ -79,6 +94,7 @@ class HasmExamplesTests(unittest.TestCase):
         self.assertEqual(len(link_ids), 1)
         for payload in self.payloads.values():
             self.assertTrue(fact_ids.issubset(payload["links"][0]["related_ids"]))
+            self.assertTrue(participant_ids.issubset(payload["links"][0]["related_ids"]))
         before = copy.deepcopy(self.payloads)
         add_collaboration_fact_mirrors(self.payloads, self.members)
         self.assertEqual(self.payloads, before)

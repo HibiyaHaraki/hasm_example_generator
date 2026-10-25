@@ -55,11 +55,13 @@ Use `--include-dev-is` to also include hololive DEV_IS members. Use
 `--max-videos N` for a smaller API-cost test run.
 
 Every imported video FACT stores its YouTube watch URL in `link`. Videos with
-multiple detected roster members also have a collaboration LINK shared by their
-FACTs and PERSONs. Each participant receives a FACT under their collaboration
-EXPERIENCE, retaining both the YouTube URL and the relationship reference.
-Detection uses roster aliases in titles and descriptions; mentions are heuristic
-and should be reviewed for false positives or missed participants.
+multiple detected roster members have one FACT per participating VTuber, stored
+only under that person's collaboration EXPERIENCE (a child of their YouTube
+activity EXPERIENCE). All participant FACTs for the same video share one
+collaboration LINK, which references the participants and their FACTs. Solo
+video FACTs remain under the activity EXPERIENCE. Detection uses roster aliases
+in titles and descriptions; mentions are heuristic and should be reviewed for
+false positives or missed participants.
 
 Upgrade existing Hololive JSON files without fetching YouTube again:
 
@@ -68,9 +70,10 @@ python scripts/generate_hololive_jp.py --revise-existing
 ```
 
 This preserves existing videos, fills URL arrays from their stored metadata, and
-adds missing collaboration LINKs and participant FACTs. Repeated revisions do not
-create additional mirrors. Add `--include-dev-is` if those files are present.
-Then run validation and folder generation below to rebuild the HASM databases.
+updates collaboration facts to the collaboration EXPERIENCE with one shared LINK
+per video. Repeated revisions are idempotent. Add `--include-dev-is` if those
+files are present. Then run validation and folder generation below to rebuild the
+HASM databases.
 
 ### 🔐 YouTube Fetching Setup
 
