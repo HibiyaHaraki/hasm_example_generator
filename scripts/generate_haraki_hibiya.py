@@ -178,6 +178,8 @@ def build() -> dict:
         "link_ids": [],
     }
 
+    for entity in [person, *experiences, *facts]:
+        entity["link"] = []
     return {"person": person, "experiences": experiences, "facts": facts, "links": []}
 
 

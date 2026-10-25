@@ -19,6 +19,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlsplit
 
 from common_logger import get_logger
 
@@ -76,6 +77,34 @@ def expect_description_path(path_value: Any, entity: str, entity_id: Any, file: 
         )
 
 
+def validate_external_links(obj: dict[str, Any], label: str, file: Path, errors: list[ValidationError]) -> None:
+    values = obj.get("link", [])
+    if not isinstance(values, list):
+        errors.append(ValidationError(file, f"{label}.link must be a list"))
+        return
+    for index, value in enumerate(values):
+        valid = False
+        if isinstance(value, str) and not any(char.isspace() for char in value):
+            try:
+                url = urlsplit(value)
+                valid = (
+                    value.lower().startswith(("http://", "https://"))
+                    and bool(url.hostname)
+                    and url.username is None
+                    and url.password is None
+                    and "\\" not in value
+                )
+                # Accessing port also rejects malformed and out-of-range ports.
+                url.port
+            except ValueError:
+                valid = False
+        if not valid:
+            errors.append(ValidationError(
+                file,
+                f"{label}.link[{index}] must be an absolute HTTP(S) URL without credentials or whitespace",
+            ))
+
+
 def validate_file(path: Path) -> list[ValidationError]:
     errors: list[ValidationError] = []
 
@@ -120,6 +149,7 @@ def validate_file(path: Path) -> list[ValidationError]:
         "link_ids",
     ]
     expect_fields(person, person_required, "person", errors, path)
+    validate_external_links(person, "person", path, errors)
 
     person_id = person.get("person_id")
     if not is_uuid(person_id):
@@ -146,6 +176,7 @@ def validate_file(path: Path) -> list[ValidationError]:
             "link_ids",
         ]
         expect_fields(exp, req, f"experiences[{i}]", errors, path)
+        validate_external_links(exp, f"experiences[{i}]", path, errors)
 
         experience_id = exp.get("experience_id")
         if not is_uuid(experience_id):
@@ -184,6 +215,7 @@ def validate_file(path: Path) -> list[ValidationError]:
             "link_ids",
         ]
         expect_fields(fact, req, f"facts[{i}]", errors, path)
+        validate_external_links(fact, f"facts[{i}]", path, errors)
 
         fact_id = fact.get("fact_id")
         if not is_uuid(fact_id):
@@ -224,6 +256,7 @@ def validate_file(path: Path) -> list[ValidationError]:
             "related_ids",
         ]
         expect_fields(link, req, f"links[{i}]", errors, path)
+        validate_external_links(link, f"links[{i}]", path, errors)
 
         link_id = link.get("link_id")
         if not is_uuid(link_id):

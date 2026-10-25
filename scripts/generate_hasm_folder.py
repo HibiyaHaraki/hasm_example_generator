@@ -127,6 +127,7 @@ def _init_db(db_path: Path) -> sqlite3.Connection:
     connection.executescript(
         """
         CREATE TABLE IF NOT EXISTS person (
+            link TEXT NOT NULL DEFAULT '[]',
             person_id TEXT PRIMARY KEY,
             person_name TEXT NOT NULL,
             person_description_path TEXT NOT NULL,
@@ -136,6 +137,7 @@ def _init_db(db_path: Path) -> sqlite3.Connection:
         );
 
         CREATE TABLE IF NOT EXISTS experience (
+            link TEXT NOT NULL DEFAULT '[]',
             experience_id TEXT PRIMARY KEY,
             person_id TEXT NOT NULL,
             experience_name TEXT NOT NULL,
@@ -145,6 +147,7 @@ def _init_db(db_path: Path) -> sqlite3.Connection:
         );
 
         CREATE TABLE IF NOT EXISTS fact (
+            link TEXT NOT NULL DEFAULT '[]',
             fact_id TEXT PRIMARY KEY,
             fact_name TEXT NOT NULL,
             occurred_at TEXT NOT NULL,
@@ -155,6 +158,7 @@ def _init_db(db_path: Path) -> sqlite3.Connection:
         );
 
         CREATE TABLE IF NOT EXISTS link (
+            link TEXT NOT NULL DEFAULT '[]',
             link_id TEXT PRIMARY KEY,
             link_name TEXT NOT NULL,
             link_type TEXT NOT NULL,
@@ -186,8 +190,8 @@ def _write_payload_to_model(payload: dict[str, Any], output_root: Path, conn: sq
     )
     conn.execute(
         """
-        INSERT INTO person (person_id, person_name, person_description_path, birthday, die, link_ids)
-        VALUES (?, ?, ?, ?, ?, ?)
+        INSERT INTO person (person_id, person_name, person_description_path, birthday, die, link_ids, link)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
         """,
         (
             person["person_id"],
@@ -196,6 +200,7 @@ def _write_payload_to_model(payload: dict[str, Any], output_root: Path, conn: sq
             person["birthday"],
             person["die"],
             _json_array(person["link_ids"]),
+            _json_array(person.get("link", [])),
         ),
     )
 
@@ -213,8 +218,8 @@ def _write_payload_to_model(payload: dict[str, Any], output_root: Path, conn: sq
         )
         conn.execute(
             """
-            INSERT INTO experience (experience_id, person_id, experience_name, experience_description_path, parent_experience_ids, link_ids)
-            VALUES (?, ?, ?, ?, ?, ?)
+            INSERT INTO experience (experience_id, person_id, experience_name, experience_description_path, parent_experience_ids, link_ids, link)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 experience["experience_id"],
@@ -223,6 +228,7 @@ def _write_payload_to_model(payload: dict[str, Any], output_root: Path, conn: sq
                 experience["experience_description_path"],
                 _json_array(experience["parent_experience_ids"]),
                 _json_array(experience["link_ids"]),
+                _json_array(experience.get("link", [])),
             ),
         )
 
@@ -241,8 +247,8 @@ def _write_payload_to_model(payload: dict[str, Any], output_root: Path, conn: sq
         )
         conn.execute(
             """
-            INSERT INTO fact (fact_id, fact_name, occurred_at, fact_description_path, experience_ids, person_ids, link_ids)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO fact (fact_id, fact_name, occurred_at, fact_description_path, experience_ids, person_ids, link_ids, link)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 fact["fact_id"],
@@ -252,6 +258,7 @@ def _write_payload_to_model(payload: dict[str, Any], output_root: Path, conn: sq
                 _json_array(fact["experience_ids"]),
                 _json_array(fact["person_ids"]),
                 _json_array(fact["link_ids"]),
+                _json_array(fact.get("link", [])),
             ),
         )
 
@@ -269,8 +276,8 @@ def _write_payload_to_model(payload: dict[str, Any], output_root: Path, conn: sq
         )
         conn.execute(
             """
-            INSERT INTO link (link_id, link_name, link_type, link_description_path, related_ids)
-            VALUES (?, ?, ?, ?, ?)
+            INSERT INTO link (link_id, link_name, link_type, link_description_path, related_ids, link)
+            VALUES (?, ?, ?, ?, ?, ?)
             """,
             (
                 link["link_id"],
@@ -278,6 +285,7 @@ def _write_payload_to_model(payload: dict[str, Any], output_root: Path, conn: sq
                 link["link_type"],
                 link["link_description_path"],
                 _json_array(link["related_ids"]),
+                _json_array(link.get("link", [])),
             ),
         )
 
@@ -345,8 +353,16 @@ def _generate_combined_model(
         return False
 
     try:
+        seen_links: dict[str, dict[str, Any]] = {}
         for payload in payloads:
-            _write_payload_to_model(payload, output_root, conn)
+            new_links = {
+                link["link_id"]: link
+                for link in payload["links"] if link["link_id"] not in seen_links
+            }
+            _merge_unique(payload["links"], "link_id", output_root, seen_links, logger)
+            _write_payload_to_model(
+                {**payload, "links": list(new_links.values())}, output_root, conn
+            )
         conn.commit()
     except Exception:
         logger.exception("Generation failed while writing combined HASM artifacts: %s", output_root)
@@ -360,7 +376,7 @@ def _generate_combined_model(
         len(payloads),
         sum(len(payload["experiences"]) for payload in payloads),
         sum(len(payload["facts"]) for payload in payloads),
-        sum(len(payload["links"]) for payload in payloads),
+        len(seen_links),
     )
     return True
 

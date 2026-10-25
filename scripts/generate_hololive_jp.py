@@ -121,7 +121,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--revise-existing",
         action="store_true",
-        help="Add collaboration experiences and reciprocal FACTs to existing JSON files.",
+        help="Add URL links, collaboration LINKs and reciprocal FACTs to existing JSON files without API calls.",
     )
     return parser.parse_args()
 
@@ -323,6 +323,7 @@ def build_member_payload(
             links.append(
                 {
                     "link_id": link_id,
+                    "link": [f"{YOUTUBE_WATCH_BASE}{video_id}"],
                     "link_name": f"Collaboration on {title}",
                     "link_type": "collaboration",
                     "link_description_path": f"LINK/{link_id}/main.md",
@@ -344,6 +345,7 @@ def build_member_payload(
         facts.append(
             {
                 "fact_id": fact_id,
+                "link": [f"{YOUTUBE_WATCH_BASE}{video_id}"],
                 "fact_name": title,
                 "occurred_at": published_at,
                 "fact_description_path": f"FACT/{fact_id}/main.md",
@@ -365,7 +367,52 @@ def build_member_payload(
         )
 
     person["link_ids"] = person_link_ids
+    for entity in [person, *experiences]:
+        entity["link"] = []
     return {"person": person, "experiences": experiences, "facts": facts, "links": links}
+
+
+def ensure_collaboration_links(payload: dict[str, Any]) -> None:
+    """Upgrade legacy URL metadata and ensure multi-person facts have LINKs."""
+    for entity in [payload["person"], *payload["experiences"], *payload["facts"], *payload["links"]]:
+        entity.setdefault("link", [])
+    links_by_id = {link["link_id"]: link for link in payload["links"]}
+    for fact in payload["facts"]:
+        if not fact["link"]:
+            for line in fact.get("description_lines", []):
+                if line.startswith("- url: "):
+                    fact["link"] = [line.removeprefix("- url: ").strip()]
+                    break
+                if line.startswith("- video_id: "):
+                    fact["link"] = [f"{YOUTUBE_WATCH_BASE}{line.removeprefix('- video_id: ').strip()}"]
+                    break
+        if len(fact.get("person_ids", [])) < 2 or any(
+            line.startswith("- mirrored_from: ") for line in fact.get("description_lines", [])
+        ):
+            continue
+        collaboration_links = [
+            links_by_id[link_id] for link_id in fact["link_ids"]
+            if link_id in links_by_id and links_by_id[link_id]["link_type"] == "collaboration"
+        ]
+        if not collaboration_links:
+            link_id = entity_id("link", f"{fact['fact_id']}:collaboration")
+            link = {
+                "link_id": link_id,
+                "link": list(fact["link"]),
+                "link_name": f"Collaboration on {fact['fact_name']}",
+                "link_type": "collaboration",
+                "link_description_path": f"LINK/{link_id}/main.md",
+                "related_ids": [*fact["person_ids"], fact["fact_id"]],
+            }
+            payload["links"].append(link)
+            links_by_id[link_id] = link
+            fact["link_ids"].append(link_id)
+            collaboration_links.append(link)
+        for link in collaboration_links:
+            if not link["link"]:
+                link["link"] = list(fact["link"])
+            if link["link_id"] not in payload["person"]["link_ids"]:
+                payload["person"]["link_ids"].append(link["link_id"])
 
 
 def add_collaboration_fact_mirrors(
@@ -378,34 +425,63 @@ def add_collaboration_fact_mirrors(
     member_by_person_id = {
         entity_id("person", member.slug): member for member in members
     }
+    facts_by_person_id = {
+        person_id: {fact["fact_id"]: fact for fact in payload["facts"]}
+        for person_id, payload in payload_by_person_id.items()
+    }
+    links_by_person_id = {
+        person_id: {link["link_id"]: link for link in payload["links"]}
+        for person_id, payload in payload_by_person_id.items()
+    }
+    source_facts = [
+        (slug, payload["person"]["person_id"], fact)
+        for slug, payload in payloads.items()
+        for fact in payload["facts"]
+        if not any(line.startswith("- mirrored_from: ") for line in fact.get("description_lines", []))
+    ]
 
-    for source_slug, source_payload in payloads.items():
-        source_person_id = source_payload["person"]["person_id"]
-        for fact in source_payload["facts"]:
-            participant_ids = fact.get("person_ids", [])
-            if len(participant_ids) < 2:
+    for source_slug, source_person_id, fact in source_facts:
+        participant_ids = fact.get("person_ids", [])
+        if len(participant_ids) < 2:
+            continue
+        for participant_id in participant_ids:
+            if participant_id == source_person_id or participant_id not in payload_by_person_id:
                 continue
-            for participant_id in participant_ids:
-                if participant_id == source_person_id or participant_id not in payload_by_person_id:
-                    continue
-                participant = member_by_person_id[participant_id]
-                participant_payload = payload_by_person_id[participant_id]
-                mirror_id = entity_id(
-                    "fact", f"{source_slug}:collaboration:{fact['fact_id']}:{participant.slug}"
-                )
-                if any(existing["fact_id"] == mirror_id for existing in participant_payload["facts"]):
-                    continue
-                mirror = dict(fact)
-                mirror["fact_id"] = mirror_id
-                mirror["fact_description_path"] = f"FACT/{mirror_id}/main.md"
-                mirror["experience_ids"] = [collaboration_experience_id(participant)]
-                mirror["link_ids"] = []
-                mirror["description_lines"] = [
-                    *fact.get("description_lines", []),
-                    "",
-                    f"- mirrored_from: {source_person_id}",
-                ]
+            participant = member_by_person_id[participant_id]
+            participant_payload = payload_by_person_id[participant_id]
+            mirror_id = entity_id(
+                "fact", f"{source_slug}:collaboration:{fact['fact_id']}:{participant.slug}"
+            )
+            mirror = dict(fact)
+            mirror["fact_id"] = mirror_id
+            mirror["fact_description_path"] = f"FACT/{mirror_id}/main.md"
+            mirror["experience_ids"] = [collaboration_experience_id(participant)]
+            mirror["link_ids"] = list(fact["link_ids"])
+            mirror["link"] = list(fact.get("link", []))
+            mirror["description_lines"] = [
+                *fact.get("description_lines", []),
+                "",
+                f"- mirrored_from: {source_person_id}",
+            ]
+            existing = facts_by_person_id[participant_id].get(mirror_id)
+            if existing is None:
                 participant_payload["facts"].append(mirror)
+                facts_by_person_id[participant_id][mirror_id] = mirror
+            else:
+                existing.update(mirror)
+            for link_id in mirror["link_ids"]:
+                link = links_by_person_id[source_person_id][link_id]
+                if mirror_id not in link["related_ids"]:
+                    link["related_ids"].append(mirror_id)
+                if link_id not in links_by_person_id[participant_id]:
+                    participant_payload["links"].append(link)
+                else:
+                    existing_link = links_by_person_id[participant_id][link_id]
+                    existing_link.update(link)
+                    link = existing_link
+                links_by_person_id[participant_id][link_id] = link
+                if link_id not in participant_payload["person"]["link_ids"]:
+                    participant_payload["person"]["link_ids"].append(link_id)
 
 
 def revise_existing_payloads(output_dir: Path, members: tuple[Member, ...]) -> int:
@@ -432,6 +508,7 @@ def revise_existing_payloads(output_dir: Path, members: tuple[Member, ...]) -> i
                         entity_id("experience", f"{member.slug}:youtube")
                     ],
                     "link_ids": [],
+                    "link": [],
                     "description_lines": [
                         "",
                         "## Scope",
@@ -442,6 +519,7 @@ def revise_existing_payloads(output_dir: Path, members: tuple[Member, ...]) -> i
         for fact in payload["facts"]:
             if len(fact.get("person_ids", [])) > 1 and collaboration_id not in fact["experience_ids"]:
                 fact["experience_ids"].append(collaboration_id)
+        ensure_collaboration_links(payload)
 
     add_collaboration_fact_mirrors(payloads, members)
     for member in members:

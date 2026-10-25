@@ -2,19 +2,19 @@
 
 Standalone seed-data repository for generating and evaluating HASM model examples.
 
-## Project Status
+## 📌 Project Status
 
 This repository is public for visibility and personal development. It is currently
 maintained as a solo project, and contributions are not being accepted at this
 time. Please do not open pull requests or issues proposing changes until this
 notice is updated.
 
-## Purpose
+## 🎯 Purpose
 
 This repository is versioned independently from the main HASM application.
 It stores curated JSON input files that can be converted into HASM model storage artifacts.
 
-## Dataset Scope
+## 📚 Dataset Scope
 
 Current dataset includes 3 Japanese historical figures and 1 real profile:
 
@@ -54,7 +54,25 @@ python scripts/generate_hololive_jp.py --max-videos 0
 Use `--include-dev-is` to also include hololive DEV_IS members. Use
 `--max-videos N` for a smaller API-cost test run.
 
-### YouTube Fetching Setup
+Every imported video FACT stores its YouTube watch URL in `link`. Videos with
+multiple detected roster members also have a collaboration LINK shared by their
+FACTs and PERSONs. Each participant receives a FACT under their collaboration
+EXPERIENCE, retaining both the YouTube URL and the relationship reference.
+Detection uses roster aliases in titles and descriptions; mentions are heuristic
+and should be reviewed for false positives or missed participants.
+
+Upgrade existing Hololive JSON files without fetching YouTube again:
+
+```bash
+python scripts/generate_hololive_jp.py --revise-existing
+```
+
+This preserves existing videos, fills URL arrays from their stored metadata, and
+adds missing collaboration LINKs and participant FACTs. Repeated revisions do not
+create additional mirrors. Add `--include-dev-is` if those files are present.
+Then run validation and folder generation below to rebuild the HASM databases.
+
+### 🔐 YouTube Fetching Setup
 
 The YouTube API key must stay local. Do not commit it to this repository. The
 repository ignores `.env`, `.env.*`, and `*.local.env` files, but the scripts use
@@ -101,7 +119,7 @@ JSON validation, and HASM output generation. Optional environment variables:
 - `HOLOLIVE_INCLUDE_DEV_IS=1`: also include hololive DEV_IS members.
 - `PYTHON`: Python executable name or path; default is `python`.
 
-## Folder Structure
+## 🗂️ Folder Structure
 
 ```text
 hasm_example_generator/
@@ -114,9 +132,13 @@ hasm_example_generator/
           `- tokugawa_ieyasu.json
 ```
 
-## JSON Conventions
+## 🧩 JSON Conventions
 
 - IDs are UUID strings.
+- Every entity supports `link`, an array of absolute HTTP(S) URLs without
+  credentials or whitespace. This is distinct from relationship `LINK` entities
+  and their UUID references in `link_ids`. Legacy JSON may omit `link`; the
+  database generator writes `[]` in that case.
 - FACT entries include `fact_id`, `fact_name`, and `occurred_at` (matches the HASM `fact.occurred_at` column used to order FACT commits along the visualizer Z-axis).
 - FACT entries use `experience_ids` to point to existing EXPERIENCE IDs.
 - Path fields (`*_description_path`) follow HASM storage model conventions:
@@ -126,12 +148,7 @@ hasm_example_generator/
   - `LINK/{link_id}/main.md`
 - Date values use ISO-8601 strings. `person.birthday`/`person.die` may be blank (`""`) for a living person with no death date.
 
-## Next Steps
-
-- Add a script to transform these JSON files into an actual `my.hasm/` folder.
-- Add validation to ensure referential integrity across IDs.
-
-## Validation Script
+## ✅ Validation Script
 
 Run the Python validator from repository root:
 
@@ -152,8 +169,15 @@ Validation checks include:
 - Description path conventions
 - FACT `experience_ids` referential integrity
 - Link reference integrity across entities (local or external UUID references)
+- External `link` array types and URL validity for PERSON/EXPERIENCE/FACT/LINK
 
-## Generate HASM Folder
+Run the offline regression tests (no API key or additional dependencies needed):
+
+```bash
+python -m unittest discover -s scripts -p test_hasm_examples.py -v
+```
+
+## 🏗️ Generate HASM Folder
 
 Generate HASM folder layout from JSON data:
 
@@ -172,20 +196,24 @@ source files are combined into one model:
 - `output/Hololive_JP/hasm.db` contains every `hololive_jp_*.json` PERSON,
   EXPERIENCE, FACT, and LINK row in one database.
 
+All four database tables include HASM's `link TEXT NOT NULL DEFAULT '[]'` column,
+storing the URL array as JSON. Identical collaboration LINKs shared across source
+files are written once; conflicting definitions are reported as errors.
+
 Non-Hololive models contain only the person and related entities from their
 source JSON file.
 
-## License
+## 📜 License
 
 This project is released under the [MIT License](LICENSE).
 
-## Project Policies
+## 📋 Project Policies
 
 - Contribution status: see [CONTRIBUTING.md](CONTRIBUTING.md).
 - Security reports: see [SECURITY.md](SECURITY.md).
 - Support expectations: see [SUPPORT.md](SUPPORT.md).
 
-## Logger Integration (Submodule)
+## 🪵 Logger Integration (Submodule)
 
 These Python scripts try to use shared logger code from `hasm_logger` first.
 
